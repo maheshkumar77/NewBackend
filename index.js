@@ -82,8 +82,7 @@ const transporter = nodemailer.createTransport({
 // Replace with the correct path to your User model
 
 app.post('/send-email', async (req, res) => {
-  const { subject, text, html } = req.body;
-
+  
   try {
     // Fetch all users from the database
     const users = await User.find({}, 'email'); // Only select the 'email' field
@@ -95,11 +94,12 @@ app.post('/send-email', async (req, res) => {
     // Create a list of email sending promises
     const emailPromises = users.map(user => {
       const mailOptions = {
-        from: process.env.EMAIL_USER,
+        from: '"Your App" <your-email@gmail.com>',
         to: user.email,
-        subject,
-        text,
-        html,
+        subject: "🚀 New Campaign Started - Join Now & Earn Instantly!",
+        text: "Hello user! A new campaign has started just for you. Join now and get rewarded instantly. Don’t miss out!",
+        html: "<h2>🎉 Hurry Up!</h2><p>We’ve just launched a <strong>new referral campaign</strong> where you can earn exciting rewards instantly.</p><ul><li>Invite your friends</li><li>They sign up using your referral code</li><li>You both get rewarded instantly!</li></ul><p><a href='https://hureshop.netlify.app/register' style='background-color:#4CAF50;color:white;padding:10px 15px;text-decoration:none;border-radius:5px;'>Join Now</a></p><p>Don’t wait—this offer won’t last long!</p>"
+      
       };
 
       return transporter.sendMail(mailOptions);
@@ -116,27 +116,53 @@ app.post('/send-email', async (req, res) => {
 });
 // Route to send email to a specific user
 app.post('/user/sendmail', async (req, res) => {
-  const { subject, text, email } = req.body;
+  const {  email } = req.body;
 
   if (!email) {
     return res.status(400).json({ success: false, message: 'Email address is required' });
   }
 
-  const mailOptions = {
-    from: "care31430@gmail.com",
-    to: email,
-    subject,
-    text,
-  };
-
   try {
+    // Fetch user by email
+    const user = await User.findOne({ email });
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found with this email' });
+    }
+
+    const { name, referralCode } = user;
+    const registerLink = `https://hureshop.netlify.app/register`;
+
+    const text = `
+Hi ${name},
+
+Invite your friends and earn rewards instantly! 🤑
+
+Use your unique referral code: ${referralCode}
+
+They can join using this link:
+${registerLink}
+
+Hurry! Don’t miss the chance to earn exciting rewards.
+    `;
+
+    const mailOptions = {
+      from: '"Your App" <your-email@gmail.com>',
+      to: email,
+      subject:`Welcome ${name}  `,
+      text,
+    };
+
     await transporter.sendMail(mailOptions);
+
     res.status(200).json({ success: true, message: `Email sent to ${email}` });
   } catch (error) {
     console.error('Error sending email:', error);
     res.status(500).json({ success: false, message: 'Failed to send email', error });
   }
 });
+
+
 
 
 // ➤ User Registration
@@ -150,6 +176,8 @@ app.post("/register", async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, 10);
     const newReferralCode = uuidv4().slice(0, 8);
     let referredBy = null;
+
+    let referrerUser = null;
 
     if (referralCode) {
       const referrer = await User.findOne({ referralCode });
@@ -165,6 +193,9 @@ app.post("/register", async (req, res) => {
         });
 
         await newReferral.save();
+
+        // Save for later email to referrer
+        referrerUser = referrer;
       }
     }
 
@@ -181,6 +212,24 @@ app.post("/register", async (req, res) => {
     await newUser.save();
     const token = generateToken(newUser._id);
 
+    // === Send confirmation email to new user ===
+    await transporter.sendMail({
+      from: '"Your App" <your-email@gmail.com>',
+      to: email,
+      subject: "Welcome to Our App 🎉",
+      html: `<h3>Hi ${name},</h3><p>Thanks for registering! Your referral code is <strong>${newReferralCode}</strong>.</p>`
+    });
+
+    // === If referred, send email to referrer ===
+    if (referrerUser) {
+      await transporter.sendMail({
+        from: '"Your App" <your-email@gmail.com>',
+        to: referrerUser.email,
+        subject: "You've Referred a New User! 🎁",
+        html: `<h3>Hey ${referrerUser.name},</h3><p>${name} just signed up using your referral code <strong>${referralCode}</strong>! 🎉</p>`
+      });
+    }
+
     res.status(201).json({
       message: "User registered successfully",
       token,
@@ -188,9 +237,12 @@ app.post("/register", async (req, res) => {
     });
 
   } catch (error) {
+    console.error("Registration Error:", error);
     res.status(500).json({ message: "Server error", error });
   }
 });
+
+
 
 // ➤ User Login
 app.post("/login", async (req, res) => {
@@ -278,6 +330,7 @@ app.get("/campaign/:id", async (req, res) => {
   }
 });
 
+
 app.put("/campaign/:id", async (req, res) => {
   try {
     const updatedCampaign = await Campaign.findByIdAndUpdate(req.params.id, req.body, { new: true });
@@ -320,41 +373,32 @@ app.get("/refer/data/:email", async (req, res) => {
 });
 
 // ➤ Get Referred Users by Coupon Code
-app.get("/refer/by-coupon/:couponcode", async (req, res) => {
-  try {
-    const couponCode = req.params.couponcode;
+// app.get("/refer/by-coupon/:couponcode", async (req, res) => {
+//   try {
+//     const couponCode = req.params.couponcode;
 
-    const referredUsers = await User.find({ referredBy: couponCode })
-      .select("name email referralCode -_id")
-      .lean();
+//     const referredUsers = await User.find({ referredBy: couponCode })
+//       .select("name email referralCode -_id")
+//       .lean();
 
-    res.status(200).json({
-      success: true,
-      referralCode: couponCode,
-      referredUsers: referredUsers || []
-    });
+//     res.status(200).json({
+//       success: true,
+//       referralCode: couponCode,
+//       referredUsers: referredUsers || []
+//     });
 
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Something went wrong",
-      referredUsers: []
-    });
-  }
-});
+//   } catch (error) {
+//     res.status(500).json({
+//       success: false,
+//       message: "Something went wrong",
+//       referredUsers: []
+//     });
+//   }
+// });
 
-// ➤ Delete User by ID
-app.delete("/user/delete/:id", async (req, res) => {
-  try {
-    const deletedUser = await User.findByIdAndDelete(req.params.id);
-    if (!deletedUser) {
-      return res.status(404).json({ error: "User not found" });
-    }
-    res.status(200).json({ message: "User deleted successfully!", user: deletedUser });
-  } catch (err) {
-    res.status(500).json({ error: "Error deleting user", details: err.message });
-  }
-});
+
+
+
 
 // ============================ SERVER ============================
 
